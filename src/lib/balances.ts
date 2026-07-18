@@ -47,6 +47,8 @@ const EVM_RPC: Partial<Record<NetworkId, { direct: string; proxy: string }>> = {
 function explorer(network: NetworkId, address: string): string {
   switch (network) {
     case 'btc':
+    case 'btc_uncompressed':
+    case 'btc_script':
     case 'btc_segwit':
       return `https://mempool.space/address/${address}`;
     case 'ltc':
@@ -122,7 +124,7 @@ type UtxoStats = {
 };
 
 async function checkMempoolFamily(
-  network: 'btc' | 'btc_segwit' | 'ltc',
+  network: 'btc' | 'btc_uncompressed' | 'btc_script' | 'btc_segwit' | 'ltc',
   address: string
 ): Promise<Pick<NetworkBalance, 'balanceAtomic' | 'balanceHuman' | 'txCount' | 'receivedAtomic'>> {
   const base =
@@ -180,7 +182,18 @@ async function checkBlockchair(
 }
 
 async function checkEvm(
-  network: Exclude<NetworkId, 'btc' | 'btc_segwit' | 'ltc' | 'doge' | 'dash' | 'zec' | 'tron'>,
+  network: Exclude<
+    NetworkId,
+    | 'btc'
+    | 'btc_uncompressed'
+    | 'btc_script'
+    | 'btc_segwit'
+    | 'ltc'
+    | 'doge'
+    | 'dash'
+    | 'zec'
+    | 'tron'
+  >,
   address: string
 ): Promise<Pick<NetworkBalance, 'balanceAtomic' | 'balanceHuman' | 'txCount'>> {
   const conf = EVM_RPC[network];
@@ -273,7 +286,13 @@ export async function checkBalance(
       NetworkBalance,
       'balanceAtomic' | 'balanceHuman' | 'txCount' | 'receivedAtomic'
     >;
-    if (network === 'btc' || network === 'btc_segwit' || network === 'ltc') {
+    if (
+      network === 'btc' ||
+      network === 'btc_uncompressed' ||
+      network === 'btc_script' ||
+      network === 'btc_segwit' ||
+      network === 'ltc'
+    ) {
       part = await checkMempoolFamily(network, address);
     } else if (network === 'doge') {
       part = await checkBlockchair('dogecoin', 'doge', address);

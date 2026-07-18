@@ -10,15 +10,19 @@ function uid(): string {
 
 const EVM_NETS: NetworkId[] = ['eth', 'bsc', 'polygon', 'arb', 'op', 'base', 'avax'];
 
+export type InputMode = 'normal' | 'brain' | 'both';
+
 export function buildWalletsFromText(
   text: string,
   networks: NetworkId[] = DEFAULT_NETWORKS,
-  opts?: { brainwalletMode?: boolean }
+  opts?: { inputMode?: InputMode }
 ): DerivedWallet[] {
-  const brainwalletMode = opts?.brainwalletMode ?? false;
+  const inputMode = opts?.inputMode ?? 'normal';
+  const modes: Exclude<InputMode, 'both'>[] =
+    inputMode === 'both' ? ['normal', 'brain'] : [inputMode];
 
-  return parseInputLines(text).map((rawLine) => {
-    const kind = brainwalletMode ? ('brainwallet' as const) : classifyLine(rawLine).kind;
+  return parseInputLines(text).flatMap((rawLine) => modes.map((mode) => {
+    const kind = mode === 'brain' ? ('brainwallet' as const) : classifyLine(rawLine).kind;
     const wallet: DerivedWallet = {
       id: uid(),
       rawLine,
@@ -67,7 +71,7 @@ export function buildWalletsFromText(
       }));
 
     return wallet;
-  });
+  }));
 }
 
 function summarize(w: DerivedWallet) {

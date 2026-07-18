@@ -6,7 +6,7 @@ import {
   type DerivedWallet,
   type NetworkId,
 } from './lib/types';
-import { buildWalletsFromText, scanBalances } from './lib/scan';
+import { buildWalletsFromText, scanBalances, type InputMode } from './lib/scan';
 
 type Filter = 'all' | 'funded' | 'alive' | 'empty' | 'err';
 
@@ -24,7 +24,7 @@ export default function App() {
   const [filter, setFilter] = useState<Filter>('all');
   const [q, setQ] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [brainwalletMode, setBrainwalletMode] = useState(false);
+  const [inputMode, setInputMode] = useState<InputMode>('normal');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const stats = useMemo(() => {
@@ -72,7 +72,7 @@ export default function App() {
 
   const runScan = useCallback(async () => {
     setError(null);
-    const current = buildWalletsFromText(text, networks, { brainwalletMode });
+    const current = buildWalletsFromText(text, networks, { inputMode });
     setWallets(current);
     if (!current.length) {
       setError('пусто');
@@ -91,7 +91,7 @@ export default function App() {
     } finally {
       setScanning(false);
     }
-  }, [text, networks, brainwalletMode]);
+  }, [text, networks, inputMode]);
 
   const toggleNetwork = (id: NetworkId) => {
     setNetworks((prev) =>
@@ -168,14 +168,24 @@ export default function App() {
               accept=".txt,.csv,.log,text/plain"
               onChange={(e) => onFiles(e.target.files)}
             />
-            <button
-              type="button"
-              className={brainwalletMode ? 'btn active' : 'btn'}
-              onClick={() => setBrainwalletMode((v) => !v)}
-              title="SHA256(passphrase) → private key"
-            >
-              BRAIN
-            </button>
+            {(
+              [
+                ['normal', 'NORMAL', 'hex / WIF / address'],
+                ['brain', 'BRAIN', 'SHA256(input) → private key'],
+                ['both', 'BOTH', 'normal + SHA256(input)'],
+              ] as const
+            ).map(([mode, label, title]) => (
+              <button
+                key={mode}
+                type="button"
+                className={inputMode === mode ? 'btn active' : 'btn'}
+                disabled={scanning}
+                onClick={() => setInputMode(mode)}
+                title={title}
+              >
+                {label}
+              </button>
+            ))}
             <button
               type="button"
               className="btn primary"
@@ -192,9 +202,11 @@ export default function App() {
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder={
-              brainwalletMode
-                ? 'passphrase — по строке (SHA256 → key)'
-                : 'hex / WIF / address — по строке'
+              inputMode === 'brain'
+                ? 'passphrase / hash — по строке (SHA256 → key)'
+                : inputMode === 'both'
+                  ? 'hex / WIF / address — normal + brainwallet'
+                  : 'hex / WIF / address — по строке'
             }
             spellCheck={false}
           />

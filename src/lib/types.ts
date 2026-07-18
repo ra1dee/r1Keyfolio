@@ -1,5 +1,7 @@
 export type NetworkId =
   | 'btc'
+  | 'btc_uncompressed'
+  | 'btc_script'
   | 'btc_segwit'
   | 'ltc'
   | 'doge'
@@ -46,7 +48,9 @@ export const NETWORK_META: Record<
   NetworkId,
   { label: string; short: string; decimals: number; symbol: string; family: 'utxo' | 'evm' | 'tron' }
 > = {
-  btc: { label: 'Bitcoin', short: 'BTC', decimals: 8, symbol: 'BTC', family: 'utxo' },
+  btc: { label: 'Bitcoin Compressed', short: 'BTC·C', decimals: 8, symbol: 'BTC', family: 'utxo' },
+  btc_uncompressed: { label: 'Bitcoin Uncompressed', short: 'BTC·U', decimals: 8, symbol: 'BTC', family: 'utxo' },
+  btc_script: { label: 'Bitcoin Script (P2SH-P2WPKH)', short: 'BTC·3', decimals: 8, symbol: 'BTC', family: 'utxo' },
   btc_segwit: { label: 'Bitcoin SegWit', short: 'BTC·bc1', decimals: 8, symbol: 'BTC', family: 'utxo' },
   ltc: { label: 'Litecoin', short: 'LTC', decimals: 8, symbol: 'LTC', family: 'utxo' },
   doge: { label: 'Dogecoin', short: 'DOGE', decimals: 8, symbol: 'DOGE', family: 'utxo' },
@@ -64,6 +68,8 @@ export const NETWORK_META: Record<
 
 export const DEFAULT_NETWORKS: NetworkId[] = [
   'btc',
+  'btc_uncompressed',
+  'btc_script',
   'btc_segwit',
   'eth',
   'bsc',

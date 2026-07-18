@@ -40,6 +40,14 @@ function p2wpkh(hrp: string, h160: Uint8Array): string {
   return bech32.encode(hrp, [0, ...words]);
 }
 
+function p2shP2wpkh(h160: Uint8Array): string {
+  const redeemScript = new Uint8Array(22);
+  redeemScript[0] = 0x00;
+  redeemScript[1] = 0x14;
+  redeemScript.set(h160, 2);
+  return base58Versioned(0x05, hash160(redeemScript));
+}
+
 export function wifToHex(wif: string): string {
   const decoded = bs58check.decode(wif);
   if (decoded.length !== 33 && decoded.length !== 34) {
@@ -69,6 +77,7 @@ export function deriveAddresses(privHex: string): Partial<Record<NetworkId, stri
   const pubCompressed = secp.getPublicKey(keyBytes, true);
   const pubUncompressed = secp.getPublicKey(keyBytes, false);
   const h160 = hash160(pubCompressed);
+  const h160Uncompressed = hash160(pubUncompressed);
 
   const ethHash = keccak_256(pubUncompressed.slice(1));
   const eth20 = ethHash.slice(-20);
@@ -82,6 +91,8 @@ export function deriveAddresses(privHex: string): Partial<Record<NetworkId, stri
 
   return {
     btc: base58Versioned(0x00, h160),
+    btc_uncompressed: base58Versioned(0x00, h160Uncompressed),
+    btc_script: p2shP2wpkh(h160),
     btc_segwit: p2wpkh('bc', h160),
     ltc: base58Versioned(0x30, h160),
     doge: base58Versioned(0x1e, h160),

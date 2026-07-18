@@ -1,5 +1,5 @@
 import { classifyLine, parseInputLines } from './parse';
-import { deriveAddresses, detectAddressNetwork, wifToHex } from './derive';
+import { brainwalletToHex, deriveAddresses, detectAddressNetwork, wifToHex } from './derive';
 import { checkBalance, mapPool } from './balances';
 import type { DerivedWallet, NetworkId } from './types';
 import { DEFAULT_NETWORKS } from './types';
@@ -12,10 +12,13 @@ const EVM_NETS: NetworkId[] = ['eth', 'bsc', 'polygon', 'arb', 'op', 'base', 'av
 
 export function buildWalletsFromText(
   text: string,
-  networks: NetworkId[] = DEFAULT_NETWORKS
+  networks: NetworkId[] = DEFAULT_NETWORKS,
+  opts?: { brainwalletMode?: boolean }
 ): DerivedWallet[] {
+  const brainwalletMode = opts?.brainwalletMode ?? false;
+
   return parseInputLines(text).map((rawLine) => {
-    const { kind } = classifyLine(rawLine);
+    const kind = brainwalletMode ? ('brainwallet' as const) : classifyLine(rawLine).kind;
     const wallet: DerivedWallet = {
       id: uid(),
       rawLine,
@@ -28,7 +31,10 @@ export function buildWalletsFromText(
     };
 
     try {
-      if (kind === 'privkey_hex') {
+      if (kind === 'brainwallet') {
+        wallet.privateKeyHex = brainwalletToHex(rawLine);
+        wallet.addresses = deriveAddresses(wallet.privateKeyHex);
+      } else if (kind === 'privkey_hex') {
         wallet.privateKeyHex = rawLine.toLowerCase();
         wallet.addresses = deriveAddresses(wallet.privateKeyHex);
       } else if (kind === 'wif') {

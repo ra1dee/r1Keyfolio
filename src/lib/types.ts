@@ -14,7 +14,7 @@ export type NetworkId =
   | 'avax'
   | 'tron';
 
-export type InputKind = 'privkey_hex' | 'wif' | 'address' | 'invalid';
+export type InputKind = 'privkey_hex' | 'wif' | 'address' | 'brainwallet' | 'invalid';
 
 export type BalanceStatus = 'idle' | 'loading' | 'ok' | 'error' | 'skipped';
 

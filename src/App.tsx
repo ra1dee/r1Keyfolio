@@ -24,6 +24,7 @@ export default function App() {
   const [filter, setFilter] = useState<Filter>('all');
   const [q, setQ] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [brainwalletMode, setBrainwalletMode] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const stats = useMemo(() => {
@@ -71,7 +72,7 @@ export default function App() {
 
   const runScan = useCallback(async () => {
     setError(null);
-    const current = buildWalletsFromText(text, networks);
+    const current = buildWalletsFromText(text, networks, { brainwalletMode });
     setWallets(current);
     if (!current.length) {
       setError('пусто');
@@ -90,7 +91,7 @@ export default function App() {
     } finally {
       setScanning(false);
     }
-  }, [text, networks]);
+  }, [text, networks, brainwalletMode]);
 
   const toggleNetwork = (id: NetworkId) => {
     setNetworks((prev) =>
@@ -169,6 +170,14 @@ export default function App() {
             />
             <button
               type="button"
+              className={brainwalletMode ? 'btn active' : 'btn'}
+              onClick={() => setBrainwalletMode((v) => !v)}
+              title="SHA256(passphrase) → private key"
+            >
+              BRAIN
+            </button>
+            <button
+              type="button"
               className="btn primary"
               disabled={scanning || !text.trim()}
               onClick={runScan}
@@ -182,7 +191,11 @@ export default function App() {
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="hex / WIF / address — по строке"
+            placeholder={
+              brainwalletMode
+                ? 'passphrase — по строке (SHA256 → key)'
+                : 'hex / WIF / address — по строке'
+            }
             spellCheck={false}
           />
           {scanning && (

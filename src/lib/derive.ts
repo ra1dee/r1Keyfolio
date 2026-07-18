@@ -48,6 +48,13 @@ export function wifToHex(wif: string): string {
   return bytesToHex(decoded.slice(1, 33));
 }
 
+/** Classic brainwallet: SHA256(UTF-8 passphrase) → secp256k1 private key. */
+export function brainwalletToHex(passphrase: string): string {
+  if (!passphrase) throw new Error('empty passphrase');
+  const hash = sha256(new TextEncoder().encode(passphrase));
+  return normalizePrivHex(bytesToHex(hash));
+}
+
 export function normalizePrivHex(hex: string): string {
   const clean = hex.toLowerCase().replace(/^0x/, '');
   if (!/^[0-9a-f]{64}$/.test(clean)) throw new Error('bad hex key');

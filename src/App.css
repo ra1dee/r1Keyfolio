@@ -172,6 +172,11 @@ textarea {
   min-width: 5.5rem;
 }
 
+.btn.active {
+  background: var(--acid);
+  color: #111;
+}
+
 .btn:hover:not(:disabled) {
   transform: translate(-1px, -1px);
 }

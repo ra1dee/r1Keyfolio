@@ -10,15 +10,30 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/x\/btc/, '/api'),
       },
+      '/x/btc2': {
+        target: 'https://blockstream.info',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/x\/btc2/, '/api'),
+      },
       '/x/ltc': {
         target: 'https://litecoinspace.org',
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/x\/ltc/, '/api'),
       },
+      '/x/blockcypher': {
+        target: 'https://api.blockcypher.com',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/x\/blockcypher/, '/v1'),
+      },
       '/x/blockchair': {
         target: 'https://api.blockchair.com',
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/x\/blockchair/, ''),
+      },
+      '/x/dashinsight': {
+        target: 'https://insight.dash.org',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/x\/dashinsight/, '/insight-api'),
       },
       '/x/zec': {
         target: 'https://api.mainnet.cipherscan.app',

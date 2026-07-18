@@ -93,16 +93,80 @@ async function sleep(ms: number) {
   await new Promise((r) => setTimeout(r, ms));
 }
 
-async function fetchJson<T>(url: string, init?: RequestInit, retries = 3): Promise<T> {
+/** Thrown when a provider signals a rate/usage limit (HTTP 402/429/503). */
+class RateLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RateLimitError';
+  }
+}
+
+/**
+ * Per-host limiter. Spaces out request *starts* by a minimum interval so we
+ * don't hammer a single API, and honours a cooldown window set on 429/402.
+ */
+const HOST_MIN_INTERVAL_MS: Record<string, number> = {
+  mempool: 250,
+  blockstream: 250,
+  litecoinspace: 250,
+  blockcypher: 400,
+  blockchair: 1100,
+  'dash-insight': 500,
+  zec: 300,
+  tron: 300,
+};
+
+type HostState = { chain: Promise<void>; last: number; cooldownUntil: number };
+const hostStates = new Map<string, HostState>();
+
+function hostGate(host: string): Promise<void> {
+  const min = HOST_MIN_INTERVAL_MS[host] ?? 250;
+  const st = hostStates.get(host) ?? { chain: Promise.resolve(), last: 0, cooldownUntil: 0 };
+  hostStates.set(host, st);
+  const run = st.chain.then(async () => {
+    const waitUntil = Math.max(st.last + min, st.cooldownUntil);
+    const wait = waitUntil - Date.now();
+    if (wait > 0) await sleep(wait);
+    st.last = Date.now();
+  });
+  st.chain = run.catch(() => {});
+  return run;
+}
+
+function bumpCooldown(host: string, ms: number) {
+  const st = hostStates.get(host);
+  if (st) st.cooldownUntil = Math.max(st.cooldownUntil, Date.now() + ms);
+}
+
+function parseRetryAfter(header: string | null): number | null {
+  if (!header) return null;
+  const secs = Number(header);
+  if (Number.isFinite(secs)) return Math.max(0, secs * 1000);
+  const date = Date.parse(header);
+  if (Number.isFinite(date)) return Math.max(0, date - Date.now());
+  return null;
+}
+
+async function fetchJson<T>(
+  host: string,
+  url: string,
+  init?: RequestInit,
+  retries = 4
+): Promise<T> {
   let lastErr: unknown;
   for (let i = 0; i < retries; i++) {
+    await hostGate(host);
     try {
       const res = await fetch(url, {
         ...init,
         headers: { Accept: 'application/json', ...(init?.headers || {}) },
       });
-      if (res.status === 429 || res.status >= 500) {
-        await sleep(400 * (i + 1));
+      if (res.status === 402 || res.status === 429 || res.status === 503 || res.status >= 500) {
+        const backoff =
+          parseRetryAfter(res.headers.get('Retry-After')) ?? Math.min(8000, 500 * 2 ** i);
+        bumpCooldown(host, backoff);
+        lastErr = new RateLimitError(`HTTP ${res.status} @ ${host}`);
+        await sleep(backoff);
         continue;
       }
       if (!res.ok) {
@@ -112,73 +176,171 @@ async function fetchJson<T>(url: string, init?: RequestInit, retries = 3): Promi
       return (await res.json()) as T;
     } catch (e) {
       lastErr = e;
+      if (e instanceof RateLimitError) continue;
       await sleep(300 * (i + 1));
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
-type UtxoStats = {
+type BalancePart = Pick<
+  NetworkBalance,
+  'balanceAtomic' | 'balanceHuman' | 'txCount' | 'receivedAtomic'
+>;
+
+function makePart(
+  network: NetworkId,
+  bal: bigint,
+  received: bigint | null,
+  txCount: number | undefined
+): BalancePart {
+  const meta = NETWORK_META[network];
+  return {
+    balanceAtomic: bal.toString(),
+    receivedAtomic: received != null ? received.toString() : undefined,
+    balanceHuman: `${formatAtomic(bal, meta.decimals)} ${meta.symbol}`,
+    txCount,
+  };
+}
+
+type Provider = { host: string; run: (address: string) => Promise<BalancePart> };
+
+/** Try providers in order; fall through on rate-limit/errors to the next one. */
+async function tryProviders(providers: Provider[], address: string): Promise<BalancePart> {
+  let lastErr: unknown;
+  let rateLimited = false;
+  for (const p of providers) {
+    try {
+      return await p.run(address);
+    } catch (e) {
+      lastErr = e;
+      if (e instanceof RateLimitError) rateLimited = true;
+    }
+  }
+  if (rateLimited) {
+    throw new RateLimitError('all providers rate-limited');
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+type EsploraStats = {
   chain_stats?: { funded_txo_sum: number; spent_txo_sum: number; tx_count: number };
   mempool_stats?: { funded_txo_sum: number; spent_txo_sum: number; tx_count: number };
 };
 
-async function checkMempoolFamily(
-  network: 'btc' | 'btc_uncompressed' | 'btc_script' | 'btc_segwit' | 'ltc',
-  address: string
-): Promise<Pick<NetworkBalance, 'balanceAtomic' | 'balanceHuman' | 'txCount' | 'receivedAtomic'>> {
-  const base =
-    network === 'ltc'
-      ? proxyOr('https://litecoinspace.org/api', '/x/ltc')
-      : proxyOr('https://mempool.space/api', '/x/btc');
-  const data = await fetchJson<UtxoStats>(`${base}/address/${encodeURIComponent(address)}`);
-  const chain = data.chain_stats ?? { funded_txo_sum: 0, spent_txo_sum: 0, tx_count: 0 };
-  const mem = data.mempool_stats ?? { funded_txo_sum: 0, spent_txo_sum: 0, tx_count: 0 };
-  const bal =
-    BigInt(chain.funded_txo_sum - chain.spent_txo_sum) +
-    BigInt(mem.funded_txo_sum - mem.spent_txo_sum);
-  const received = BigInt(chain.funded_txo_sum) + BigInt(mem.funded_txo_sum);
-  const meta = NETWORK_META[network];
+/** Esplora-compatible API (mempool.space, blockstream.info, litecoinspace). */
+function esploraProvider(host: string, base: string, network: NetworkId): Provider {
   return {
-    balanceAtomic: bal.toString(),
-    receivedAtomic: received.toString(),
-    balanceHuman: `${formatAtomic(bal, meta.decimals)} ${meta.symbol}`,
-    txCount: chain.tx_count + mem.tx_count,
+    host,
+    run: async (address) => {
+      const data = await fetchJson<EsploraStats>(
+        host,
+        `${base}/address/${encodeURIComponent(address)}`
+      );
+      const chain = data.chain_stats ?? { funded_txo_sum: 0, spent_txo_sum: 0, tx_count: 0 };
+      const mem = data.mempool_stats ?? { funded_txo_sum: 0, spent_txo_sum: 0, tx_count: 0 };
+      const bal =
+        BigInt(chain.funded_txo_sum - chain.spent_txo_sum) +
+        BigInt(mem.funded_txo_sum - mem.spent_txo_sum);
+      const received = BigInt(chain.funded_txo_sum) + BigInt(mem.funded_txo_sum);
+      return makePart(network, bal, received, chain.tx_count + mem.tx_count);
+    },
   };
 }
 
-async function checkBlockchair(
-  chain: 'dogecoin' | 'dash',
-  network: 'doge' | 'dash',
-  address: string
-): Promise<Pick<NetworkBalance, 'balanceAtomic' | 'balanceHuman' | 'txCount' | 'receivedAtomic'>> {
-  const url = proxyOr(
-    `https://api.blockchair.com/${chain}/dashboards/address/${address}?limit=0`,
-    `/x/blockchair/${chain}/dashboards/address/${address}?limit=0`
-  );
-  type Resp = {
-    data?: Record<
-      string,
-      {
-        address?: {
-          balance?: number;
-          received?: number;
-          transaction_count?: number;
-        };
-      }
-    >;
-  };
-  const data = await fetchJson<Resp>(url);
-  const entry = data.data?.[address]?.address;
-  const bal = BigInt(entry?.balance ?? 0);
-  const received = BigInt(entry?.received ?? 0);
-  const meta = NETWORK_META[network];
+/** BlockCypher: /v1/{coin}/main/addrs/{addr}/balance (values already in atomic). */
+function blockcypherProvider(base: string, coin: 'btc' | 'ltc' | 'doge', network: NetworkId): Provider {
   return {
-    balanceAtomic: bal.toString(),
-    receivedAtomic: received.toString(),
-    balanceHuman: `${formatAtomic(bal, meta.decimals)} ${meta.symbol}`,
-    txCount: entry?.transaction_count,
+    host: 'blockcypher',
+    run: async (address) => {
+      type Resp = { balance?: number; total_received?: number; final_n_tx?: number; n_tx?: number };
+      const data = await fetchJson<Resp>(
+        'blockcypher',
+        `${base}/${coin}/main/addrs/${encodeURIComponent(address)}/balance`
+      );
+      const bal = BigInt(data.balance ?? 0);
+      const received = BigInt(data.total_received ?? 0);
+      return makePart(network, bal, received, data.final_n_tx ?? data.n_tx);
+    },
   };
+}
+
+/** Blockchair dashboards API (DOGE/DASH). */
+function blockchairProvider(chain: 'dogecoin' | 'dash', network: 'doge' | 'dash'): Provider {
+  return {
+    host: 'blockchair',
+    run: async (address) => {
+      type Resp = {
+        data?: Record<
+          string,
+          { address?: { balance?: number; received?: number; transaction_count?: number } }
+        >;
+      };
+      const data = await fetchJson<Resp>(
+        'blockchair',
+        proxyOr(
+          `https://api.blockchair.com/${chain}/dashboards/address/${address}?limit=0`,
+          `/x/blockchair/${chain}/dashboards/address/${address}?limit=0`
+        )
+      );
+      const entry = data.data?.[address]?.address;
+      return makePart(
+        network,
+        BigInt(entry?.balance ?? 0),
+        BigInt(entry?.received ?? 0),
+        entry?.transaction_count
+      );
+    },
+  };
+}
+
+/** Dash Insight API fallback. */
+function dashInsightProvider(): Provider {
+  return {
+    host: 'dash-insight',
+    run: async (address) => {
+      type Resp = { balanceSat?: number; totalReceivedSat?: number; txApperances?: number };
+      const data = await fetchJson<Resp>(
+        'dash-insight',
+        proxyOr(
+          `https://insight.dash.org/insight-api/addr/${encodeURIComponent(address)}`,
+          `/x/dashinsight/addr/${encodeURIComponent(address)}`
+        )
+      );
+      return makePart(
+        'dash',
+        BigInt(data.balanceSat ?? 0),
+        BigInt(data.totalReceivedSat ?? 0),
+        data.txApperances
+      );
+    },
+  };
+}
+
+function btcProviders(network: NetworkId): Provider[] {
+  return [
+    esploraProvider('mempool', proxyOr('https://mempool.space/api', '/x/btc'), network),
+    esploraProvider('blockstream', proxyOr('https://blockstream.info/api', '/x/btc2'), network),
+    blockcypherProvider(proxyOr('https://api.blockcypher.com/v1', '/x/blockcypher'), 'btc', network),
+  ];
+}
+
+function ltcProviders(): Provider[] {
+  return [
+    esploraProvider('litecoinspace', proxyOr('https://litecoinspace.org/api', '/x/ltc'), 'ltc'),
+    blockcypherProvider(proxyOr('https://api.blockcypher.com/v1', '/x/blockcypher'), 'ltc', 'ltc'),
+  ];
+}
+
+function dogeProviders(): Provider[] {
+  return [
+    blockchairProvider('dogecoin', 'doge'),
+    blockcypherProvider(proxyOr('https://api.blockcypher.com/v1', '/x/blockcypher'), 'doge', 'doge'),
+  ];
+}
+
+function dashProviders(): Provider[] {
+  return [blockchairProvider('dash', 'dash'), dashInsightProvider()];
 }
 
 async function checkEvm(
@@ -223,34 +385,29 @@ async function checkEvm(
   };
 }
 
-async function checkZec(
-  address: string
-): Promise<Pick<NetworkBalance, 'balanceAtomic' | 'balanceHuman' | 'txCount' | 'receivedAtomic'>> {
+async function checkZec(address: string): Promise<BalancePart> {
   const url = proxyOr(
     `https://api.mainnet.cipherscan.app/api/address/${address}?page=1&limit=1`,
     `/x/zec/api/address/${address}?page=1&limit=1`
   );
   type Resp = { balance?: number; totalReceived?: number; txCount?: number; error?: string };
-  const data = await fetchJson<Resp>(url);
+  const data = await fetchJson<Resp>('zec', url);
   if (data.error) throw new Error(data.error);
-  const bal = BigInt(data.balance ?? 0);
-  const meta = NETWORK_META.zec;
-  return {
-    balanceAtomic: bal.toString(),
-    receivedAtomic: data.totalReceived != null ? String(data.totalReceived) : undefined,
-    balanceHuman: `${formatAtomic(bal, meta.decimals)} ${meta.symbol}`,
-    txCount: data.txCount,
-  };
+  return makePart(
+    'zec',
+    BigInt(data.balance ?? 0),
+    data.totalReceived != null ? BigInt(data.totalReceived) : null,
+    data.txCount
+  );
 }
 
-async function checkTron(
-  address: string
-): Promise<Pick<NetworkBalance, 'balanceAtomic' | 'balanceHuman' | 'txCount'>> {
+async function checkTron(address: string): Promise<BalancePart> {
   const url = proxyOr(
     'https://api.trongrid.io/wallet/getaccount',
     '/x/tron/wallet/getaccount'
   );
   const data = await fetchJson<{ balance?: number; address?: string; create_time?: number }>(
+    'tron',
     url,
     {
       method: 'POST',
@@ -259,13 +416,8 @@ async function checkTron(
     }
   );
   const bal = BigInt(data.balance ?? 0);
-  const meta = NETWORK_META.tron;
   const alive = Boolean(data.create_time) || bal > 0n;
-  return {
-    balanceAtomic: bal.toString(),
-    balanceHuman: `${formatAtomic(bal, meta.decimals)} ${meta.symbol}`,
-    txCount: alive ? 1 : 0,
-  };
+  return makePart('tron', bal, null, alive ? 1 : 0);
 }
 
 export async function checkBalance(
@@ -282,22 +434,20 @@ export async function checkBalance(
   };
 
   try {
-    let part: Pick<
-      NetworkBalance,
-      'balanceAtomic' | 'balanceHuman' | 'txCount' | 'receivedAtomic'
-    >;
+    let part: BalancePart;
     if (
       network === 'btc' ||
       network === 'btc_uncompressed' ||
       network === 'btc_script' ||
-      network === 'btc_segwit' ||
-      network === 'ltc'
+      network === 'btc_segwit'
     ) {
-      part = await checkMempoolFamily(network, address);
+      part = await tryProviders(btcProviders(network), address);
+    } else if (network === 'ltc') {
+      part = await tryProviders(ltcProviders(), address);
     } else if (network === 'doge') {
-      part = await checkBlockchair('dogecoin', 'doge', address);
+      part = await tryProviders(dogeProviders(), address);
     } else if (network === 'dash') {
-      part = await checkBlockchair('dash', 'dash', address);
+      part = await tryProviders(dashProviders(), address);
     } else if (network === 'zec') {
       part = await checkZec(address);
     } else if (network === 'tron') {
@@ -308,6 +458,13 @@ export async function checkBalance(
 
     return { ...base, ...part, status: 'ok' };
   } catch (e) {
+    if (e instanceof RateLimitError) {
+      return {
+        ...base,
+        status: 'skipped',
+        error: 'rate limit — повторите позже',
+      };
+    }
     return {
       ...base,
       status: 'error',

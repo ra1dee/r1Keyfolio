@@ -83,7 +83,7 @@ export default function App() {
     setProgress({ done: 0, total: 0 });
     try {
       await scanBalances(current, {
-        concurrency: 8,
+        concurrency: 5,
         onUpdate: setWallets,
         onProgress: (done, total) => setProgress({ done, total }),
       });
@@ -309,11 +309,12 @@ export default function App() {
                       }}
                     >
                       <em>{NETWORK_META[b.network].short}</em>
-                      <strong>
+                      <strong title={b.error}>
                         {b.status === 'loading' && '…'}
                         {b.status === 'idle' && '—'}
                         {b.status === 'ok' && b.balanceHuman}
                         {b.status === 'error' && '!'}
+                        {b.status === 'skipped' && '⏳'}
                       </strong>
                       <code>{shortAddr(b.address)}</code>
                       {b.status === 'ok' && (

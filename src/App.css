@@ -415,6 +415,11 @@ textarea:focus {
   color: #fff;
 }
 
+.cell.skipped {
+  opacity: 0.7;
+  border-style: dashed;
+}
+
 .cell.error em,
 .cell.error code,
 .cell.error small {

@@ -36,6 +36,7 @@ body {
 code,
 textarea,
 .raw,
+.priv,
 .cell code,
 .search {
   font-family: 'DM Mono', ui-monospace, monospace;
@@ -301,8 +302,15 @@ textarea:focus {
   display: flex;
   justify-content: space-between;
   gap: 0.6rem;
-  align-items: center;
+  align-items: flex-start;
   margin-bottom: 0.5rem;
+}
+
+.row-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
 }
 
 .raw {
@@ -314,6 +322,22 @@ textarea:focus {
   font-weight: 600;
   color: var(--ink);
   text-align: left;
+}
+
+.priv {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--mute);
+  text-align: left;
+  word-break: break-all;
+}
+
+.priv:hover {
+  color: var(--ink);
 }
 
 .tags {

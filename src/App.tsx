@@ -51,6 +51,7 @@ export default function App() {
       list = list.filter(
         (w) =>
           w.rawLine.toLowerCase().includes(s) ||
+          w.privateKeyHex?.toLowerCase().includes(s) ||
           Object.values(w.addresses).some((a) => a?.toLowerCase().includes(s))
       );
     }
@@ -270,9 +271,21 @@ export default function App() {
                 className={`row ${w.hasAnyFunds ? 'hit' : ''} ${w.kind === 'invalid' ? 'bad' : ''}`}
               >
                 <div className="row-head">
-                  <button type="button" className="raw" onClick={() => copy(w.rawLine)} title="copy">
-                    {shortAddr(w.rawLine)}
-                  </button>
+                  <div className="row-meta">
+                    <button type="button" className="raw" onClick={() => copy(w.rawLine)} title="copy">
+                      {shortAddr(w.rawLine)}
+                    </button>
+                    {w.kind === 'brainwallet' && w.privateKeyHex && (
+                      <button
+                        type="button"
+                        className="priv"
+                        onClick={() => copy(w.privateKeyHex!)}
+                        title="copy private key"
+                      >
+                        key {w.privateKeyHex}
+                      </button>
+                    )}
+                  </div>
                   <div className="tags">
                     <span>{w.kind.replace('privkey_', '')}</span>
                     {w.hasAnyFunds && <span className="tag-hit">$$$</span>}

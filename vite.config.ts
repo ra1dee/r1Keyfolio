@@ -30,6 +30,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/x\/blockchair/, ''),
       },
+      '/x/bci': {
+        target: 'https://blockchain.info',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/x\/bci/, ''),
+      },
       '/x/dashinsight': {
         target: 'https://insight.dash.org',
         changeOrigin: true,

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
 import {
   DEFAULT_NETWORKS,
@@ -7,6 +7,15 @@ import {
   type NetworkId,
 } from './lib/types';
 import { buildWalletsFromText, scanBalances, type InputMode } from './lib/scan';
+import {
+  BLOCKCHAIR_DAILY_LIMIT,
+  blockchairResetInMs,
+  formatResetCountdown,
+  getBlockchairApiKey,
+  getBlockchairUsage,
+  setBlockchairApiKey,
+  type BlockchairUsage,
+} from './lib/balances';
 
 type Filter = 'all' | 'funded' | 'alive' | 'empty' | 'err';
 
@@ -25,7 +34,23 @@ export default function App() {
   const [q, setQ] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [inputMode, setInputMode] = useState<InputMode>('normal');
+  const [apiKey, setApiKey] = useState(() => getBlockchairApiKey());
+  const [usage, setUsage] = useState<BlockchairUsage>(() => getBlockchairUsage());
+  const [resetIn, setResetIn] = useState(() => blockchairResetInMs());
   const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      setUsage(getBlockchairUsage());
+      setResetIn(blockchairResetInMs());
+    }, 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const refreshUsage = useCallback(() => {
+    setUsage(getBlockchairUsage());
+    setResetIn(blockchairResetInMs());
+  }, []);
 
   const stats = useMemo(() => {
     const funded = wallets.filter((w) => w.hasAnyFunds).length;
@@ -73,6 +98,7 @@ export default function App() {
 
   const runScan = useCallback(async () => {
     setError(null);
+    setBlockchairApiKey(apiKey);
     const current = buildWalletsFromText(text, networks, { inputMode });
     setWallets(current);
     if (!current.length) {
@@ -83,16 +109,18 @@ export default function App() {
     setProgress({ done: 0, total: 0 });
     try {
       await scanBalances(current, {
-        concurrency: 5,
+        concurrency: 4,
         onUpdate: setWallets,
         onProgress: (done, total) => setProgress({ done, total }),
+        onUsage: refreshUsage,
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setScanning(false);
+      refreshUsage();
     }
-  }, [text, networks, inputMode]);
+  }, [text, networks, inputMode, apiKey, refreshUsage]);
 
   const toggleNetwork = (id: NetworkId) => {
     setNetworks((prev) =>
@@ -217,6 +245,31 @@ export default function App() {
             </div>
           )}
           {error && <div className="err">{error}</div>}
+        </div>
+
+        <div className="bc-bar">
+          <div className="bc-usage" title="Free plan ~1440 request points / day, reset 00:00 UTC">
+            <span>
+              Blockchair {usage.cost.toFixed(1)} / {BLOCKCHAIR_DAILY_LIMIT}
+              {!apiKey.trim() ? ' (free)' : ' (key)'}
+            </span>
+            <i
+              style={{
+                width: `${Math.min(100, (usage.cost / BLOCKCHAIR_DAILY_LIMIT) * 100)}%`,
+              }}
+            />
+            <small>reset UTC через {formatResetCountdown(resetIn)}</small>
+          </div>
+          <input
+            className="bc-key"
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            onBlur={() => setBlockchairApiKey(apiKey)}
+            placeholder="Blockchair API key (optional)"
+            spellCheck={false}
+            disabled={scanning}
+          />
         </div>
 
         <div className="nets">

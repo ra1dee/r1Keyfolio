@@ -195,55 +195,6 @@ textarea {
   font-size: 0.82rem;
 }
 
-.bc-bar {
-  display: flex;
-  gap: 0.6rem;
-  align-items: stretch;
-  flex-wrap: wrap;
-  margin-top: 0.65rem;
-}
-
-.bc-usage {
-  flex: 1 1 220px;
-  border: 2px solid var(--line);
-  background: #fff;
-  padding: 0.45rem 0.55rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  min-width: 0;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-
-.bc-usage i {
-  display: block;
-  height: 6px;
-  background: var(--acid);
-  max-width: 100%;
-}
-
-.bc-usage small {
-  color: var(--mute);
-  font-weight: 600;
-  font-family: 'DM Mono', ui-monospace, monospace;
-}
-
-.bc-key {
-  flex: 1 1 240px;
-  border: 2px solid var(--line);
-  background: #fff;
-  padding: 0.45rem 0.6rem;
-  font-family: 'DM Mono', ui-monospace, monospace;
-  font-size: 0.78rem;
-  outline: none;
-}
-
-.bc-key:focus {
-  border-color: #000;
-}
-
 textarea:focus {
   outline: none;
   background: #fffeef;

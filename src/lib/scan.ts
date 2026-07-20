@@ -108,7 +108,6 @@ export async function scanBalances(
     concurrency?: number;
     onUpdate: (wallets: DerivedWallet[]) => void;
     onProgress?: (done: number, total: number) => void;
-    onUsage?: () => void;
   }
 ): Promise<DerivedWallet[]> {
   const concurrency = opts.concurrency ?? 4;
@@ -123,6 +122,7 @@ export async function scanBalances(
   let total = 0;
   for (const w of next) total += w.balances.length;
   let done = 0;
+  opts.onProgress?.(0, total);
   const bump = (n = 1) => {
     done += n;
     opts.onProgress?.(done, total);
@@ -142,66 +142,93 @@ export async function scanBalances(
     }
   }
 
+  const flush = () => {
+    opts.onUpdate(next.map((x) => ({ ...x, balances: [...x.balances] })));
+  };
+
+  const applyJob = (
+    job: { wi: number; bi: number; address: string },
+    row: ReturnType<typeof balanceFromAtomic>
+  ) => {
+    next[job.wi]!.balances[job.bi] = row;
+    summarize(next[job.wi]!);
+    bump(1);
+    flush();
+  };
+
   for (const [chain, jobs] of byChain) {
-    const addresses = jobs.map((j) => j.address);
     try {
       if (chain === 'bitcoin') {
-        // Prefer blockchain.info for BTC (free multi-addr + n_tx/received),
-        // fall back to Blockchair mass check.
-        try {
-          const bci = await fetchBlockchainInfoBalances(addresses);
-          for (const job of jobs) {
-            const row = bci.get(job.address);
-            const net = next[job.wi]!.balances[job.bi]!.network;
-            next[job.wi]!.balances[job.bi] = balanceFromAtomic(
-              net,
-              job.address,
-              row?.balance ?? 0n,
-              'ok',
-              undefined,
-              { received: row?.received ?? 0n, txCount: row?.txCount ?? 0 }
-            );
-            summarize(next[job.wi]!);
+        const CHUNK = 40;
+        let preferBci = true;
+        for (let i = 0; i < jobs.length; i += CHUNK) {
+          const slice = jobs.slice(i, i + CHUNK);
+          const addrs = slice.map((j) => j.address);
+          let map: Map<string, bigint> | null = null;
+          let bciMap: Awaited<ReturnType<typeof fetchBlockchainInfoBalances>> | null = null;
+
+          if (preferBci) {
+            try {
+              bciMap = await fetchBlockchainInfoBalances(addrs);
+            } catch {
+              preferBci = false;
+            }
           }
-        } catch (bciErr) {
-          const balances = await fetchBlockchairBalances(chain, addresses);
-          opts.onUsage?.();
-          for (const job of jobs) {
-            const bal = balances.get(job.address) ?? 0n;
-            const net = next[job.wi]!.balances[job.bi]!.network;
-            next[job.wi]!.balances[job.bi] = balanceFromAtomic(net, job.address, bal);
-            summarize(next[job.wi]!);
+
+          if (!bciMap) {
+            map = await fetchBlockchairBalances(chain, addrs);
           }
-          if (bciErr instanceof RateLimitError) {
-            /* used Blockchair fallback after BCI limit */
+
+          for (const job of slice) {
+            const net = next[job.wi]!.balances[job.bi]!.network;
+            if (bciMap) {
+              const row = bciMap.get(job.address);
+              applyJob(
+                job,
+                balanceFromAtomic(net, job.address, row?.balance ?? 0n, 'ok', undefined, {
+                  received: row?.received ?? 0n,
+                  txCount: row?.txCount ?? 0,
+                })
+              );
+            } else {
+              const bal = map!.get(job.address) ?? 0n;
+              applyJob(job, balanceFromAtomic(net, job.address, bal));
+            }
           }
         }
       } else {
-        const balances = await fetchBlockchairBalances(chain, addresses);
-        opts.onUsage?.();
-        for (const job of jobs) {
-          const bal = balances.get(job.address) ?? 0n;
-          const net = next[job.wi]!.balances[job.bi]!.network;
-          next[job.wi]!.balances[job.bi] = balanceFromAtomic(net, job.address, bal);
-          summarize(next[job.wi]!);
+        const CHUNK = 500;
+        for (let i = 0; i < jobs.length; i += CHUNK) {
+          const slice = jobs.slice(i, i + CHUNK);
+          const balances = await fetchBlockchairBalances(
+            chain,
+            slice.map((j) => j.address)
+          );
+          for (const job of slice) {
+            const bal = balances.get(job.address) ?? 0n;
+            const net = next[job.wi]!.balances[job.bi]!.network;
+            applyJob(job, balanceFromAtomic(net, job.address, bal));
+          }
         }
       }
     } catch (e) {
       const skipped = e instanceof RateLimitError;
       for (const job of jobs) {
+        // Already counted? If we partially applied, skip already-done cells.
+        if (next[job.wi]!.balances[job.bi]!.status !== 'loading') continue;
         const net = next[job.wi]!.balances[job.bi]!.network;
-        next[job.wi]!.balances[job.bi] = balanceFromAtomic(
-          net,
-          job.address,
-          0n,
-          skipped ? 'skipped' : 'error',
-          e instanceof Error ? e.message : String(e)
+        applyJob(
+          job,
+          balanceFromAtomic(
+            net,
+            job.address,
+            0n,
+            skipped ? 'skipped' : 'error',
+            e instanceof Error ? e.message : String(e)
+          )
         );
-        summarize(next[job.wi]!);
       }
     }
-    bump(jobs.length);
-    opts.onUpdate(next.map((x) => ({ ...x, balances: [...x.balances] })));
   }
 
   // ——— EVM / Tron: per-address ———

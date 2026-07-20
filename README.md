@@ -51,10 +51,8 @@ password
 - BTC: до 40 адресов за запрос, ответ с `final_balance`, `total_received`, `n_tx`
 - Остальные UTXO: mass check, стоимость ≈ `1 + 0.001 × адресов`
 - Троттлинг, чтобы не ловить `429` / `402`
-- В UI: счётчик Blockchair `использовано / 1440` и таймер до сброса
-- Опциональный Blockchair API key (в `localStorage`)
 
-**Лимиты Blockchair (free, без ключа):**
+**Лимиты Blockchair (free):**
 
 | | |
 |--|--|

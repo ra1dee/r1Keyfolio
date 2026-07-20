@@ -7,17 +7,39 @@ import {
   type NetworkId,
 } from './lib/types';
 import { buildWalletsFromText, scanBalances, type InputMode } from './lib/scan';
-import {
-  BLOCKCHAIR_DAILY_LIMIT,
-  blockchairResetInMs,
-  formatResetCountdown,
-  getBlockchairApiKey,
-  getBlockchairUsage,
-  setBlockchairApiKey,
-  type BlockchairUsage,
-} from './lib/balances';
 
 type Filter = 'all' | 'funded' | 'alive' | 'empty' | 'err';
+
+const STORAGE_NETWORKS = 'keyfolio_networks';
+const STORAGE_MODE = 'keyfolio_input_mode';
+
+const ALL_NETWORK_IDS = new Set<string>(Object.keys(NETWORK_META));
+const VALID_MODES = new Set<InputMode>(['normal', 'brain', 'both']);
+
+function loadNetworks(): NetworkId[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_NETWORKS);
+    if (!raw) return [...DEFAULT_NETWORKS];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [...DEFAULT_NETWORKS];
+    const list = parsed.filter(
+      (n): n is NetworkId => typeof n === 'string' && ALL_NETWORK_IDS.has(n)
+    );
+    return list.length ? list : [...DEFAULT_NETWORKS];
+  } catch {
+    return [...DEFAULT_NETWORKS];
+  }
+}
+
+function loadInputMode(): InputMode {
+  try {
+    const raw = localStorage.getItem(STORAGE_MODE);
+    if (raw && VALID_MODES.has(raw as InputMode)) return raw as InputMode;
+  } catch {
+    /* ignore */
+  }
+  return 'normal';
+}
 
 function shortAddr(a: string) {
   if (a.length <= 16) return a;
@@ -26,31 +48,31 @@ function shortAddr(a: string) {
 
 export default function App() {
   const [text, setText] = useState('');
-  const [networks, setNetworks] = useState<NetworkId[]>([...DEFAULT_NETWORKS]);
+  const [networks, setNetworks] = useState<NetworkId[]>(loadNetworks);
   const [wallets, setWallets] = useState<DerivedWallet[]>([]);
   const [scanning, setScanning] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [filter, setFilter] = useState<Filter>('all');
   const [q, setQ] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [inputMode, setInputMode] = useState<InputMode>('normal');
-  const [apiKey, setApiKey] = useState(() => getBlockchairApiKey());
-  const [usage, setUsage] = useState<BlockchairUsage>(() => getBlockchairUsage());
-  const [resetIn, setResetIn] = useState(() => blockchairResetInMs());
+  const [inputMode, setInputMode] = useState<InputMode>(loadInputMode);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const t = setInterval(() => {
-      setUsage(getBlockchairUsage());
-      setResetIn(blockchairResetInMs());
-    }, 1000);
-    return () => clearInterval(t);
-  }, []);
+    try {
+      localStorage.setItem(STORAGE_NETWORKS, JSON.stringify(networks));
+    } catch {
+      /* ignore */
+    }
+  }, [networks]);
 
-  const refreshUsage = useCallback(() => {
-    setUsage(getBlockchairUsage());
-    setResetIn(blockchairResetInMs());
-  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_MODE, inputMode);
+    } catch {
+      /* ignore */
+    }
+  }, [inputMode]);
 
   const stats = useMemo(() => {
     const funded = wallets.filter((w) => w.hasAnyFunds).length;
@@ -98,7 +120,6 @@ export default function App() {
 
   const runScan = useCallback(async () => {
     setError(null);
-    setBlockchairApiKey(apiKey);
     const current = buildWalletsFromText(text, networks, { inputMode });
     setWallets(current);
     if (!current.length) {
@@ -112,15 +133,13 @@ export default function App() {
         concurrency: 4,
         onUpdate: setWallets,
         onProgress: (done, total) => setProgress({ done, total }),
-        onUsage: refreshUsage,
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setScanning(false);
-      refreshUsage();
     }
-  }, [text, networks, inputMode, apiKey, refreshUsage]);
+  }, [text, networks, inputMode]);
 
   const toggleNetwork = (id: NetworkId) => {
     setNetworks((prev) =>
@@ -245,31 +264,6 @@ export default function App() {
             </div>
           )}
           {error && <div className="err">{error}</div>}
-        </div>
-
-        <div className="bc-bar">
-          <div className="bc-usage" title="Free plan ~1440 request points / day, reset 00:00 UTC">
-            <span>
-              Blockchair {usage.cost.toFixed(1)} / {BLOCKCHAIR_DAILY_LIMIT}
-              {!apiKey.trim() ? ' (free)' : ' (key)'}
-            </span>
-            <i
-              style={{
-                width: `${Math.min(100, (usage.cost / BLOCKCHAIR_DAILY_LIMIT) * 100)}%`,
-              }}
-            />
-            <small>reset UTC через {formatResetCountdown(resetIn)}</small>
-          </div>
-          <input
-            className="bc-key"
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            onBlur={() => setBlockchairApiKey(apiKey)}
-            placeholder="Blockchair API key (optional)"
-            spellCheck={false}
-            disabled={scanning}
-          />
         </div>
 
         <div className="nets">
